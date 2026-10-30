@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.llm.client import llm_client
+from app.runtime.bootstrap import agent
+
 
 
 app = FastAPI(
@@ -42,45 +44,15 @@ async def health():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        completion = await llm_client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are BookRecommender, an AI book assistant. "
-                        "You help users discover books, understand "
-                        "literature and create original stories."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": request.message,
-                },
-            ],
-        )
-
-        answer = completion.choices[0].message.content
-
-        if not answer:
-            raise HTTPException(
-                status_code=502,
-                detail="The model returned an empty response.",
-            )
+        answer = await agent.run(request.message)
 
         return ChatResponse(
             response=answer,
             model=settings.llm_model,
         )
 
-    except (APIConnectionError, APITimeoutError):
+    except Exception:
         raise HTTPException(
-            status_code=503,
-            detail="Could not connect to the LLM provider.",
-        )
-
-    except APIStatusError:
-        raise HTTPException(
-            status_code=502,
-            detail="The LLM provider returned an error.",
+            status_code=500,
+            detail="Agent execution failed.",
         )
