@@ -49,26 +49,43 @@ class TraceCollector:
         tool_name: str,
         arguments: dict,
     ) -> ToolCallTrace:
-        run = self._get_run(run_id)
+        trace = self.create_tool_call(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            run_id=run_id,
+        )
+        self.mark_tool_call_started(run_id, tool_call_id)
+        return trace
 
+    def create_tool_call(
+        self,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict,
+    ) -> ToolCallTrace:
+        run = self._get_run(run_id)
         trace = ToolCallTrace(
             tool_call_id=tool_call_id,
             tool_name=tool_name,
             arguments=arguments,
         )
-
         run.tool_calls.append(trace)
+        return trace
 
+    def mark_tool_call_started(self, run_id: str, tool_call_id: str) -> None:
+        trace = self._get_tool_call(run_id, tool_call_id)
+        trace.status = "running"
+        trace.started_at = utc_now()
         self.record_event(
             run_id,
             "tool_call_started",
             {
                 "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
+                "tool_name": trace.tool_name,
             },
         )
-
-        return trace
 
     def complete_tool_call(
         self,
@@ -161,6 +178,9 @@ class TraceCollector:
 
     def get_run(self, run_id: str) -> AgentRun:
         return self._get_run(run_id)
+
+    def get_tool_call(self, run_id: str, tool_call_id: str) -> ToolCallTrace:
+        return self._get_tool_call(run_id, tool_call_id)
 
     def get_all_runs(self) -> list[AgentRun]:
         return list(self._runs.values())

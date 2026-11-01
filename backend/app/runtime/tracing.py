@@ -25,10 +25,11 @@ class ToolCallTrace(BaseModel):
     tool_name: str
     arguments: dict[str, Any]
 
-    status: Literal["running", "completed", "failed"] = "running"
+    status: Literal["running", "awaiting_approval", "completed", "failed"] = "running"
 
     result: Any | None = None
     error: str | None = None
+    approval_id: str | None = None
 
     started_at: datetime = Field(default_factory=utc_now)
     finished_at: datetime | None = None
@@ -42,7 +43,7 @@ class AgentRun(BaseModel):
 
     user_message: str
 
-    status: Literal["running", "completed", "failed"] = "running"
+    status: Literal["running", "awaiting_approval", "completed", "failed"] = "running"
 
     events: list[TraceEvent] = Field(default_factory=list)
     tool_calls: list[ToolCallTrace] = Field(default_factory=list)
