@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any
+from pydantic import BaseModel
 
 from app.tools.registry import ToolRegistry
 
@@ -32,6 +33,12 @@ class ToolExecutor:
         arguments = tool.args_schema.model_validate_json(
             arguments_json
         )
+
+        return await self.execute_validated(tool_name, arguments)
+
+    async def execute_validated(self, tool_name: str, arguments: BaseModel) -> Any:
+        """Execute an already validated model without parsing untrusted JSON again."""
+        tool = self.registry.get(tool_name)
 
         try:
             return await asyncio.wait_for(

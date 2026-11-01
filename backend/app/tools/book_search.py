@@ -1,12 +1,21 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.tools.base import ToolDefinition
 
 
 class BookSearchInput(BaseModel):
     query: str = Field(
-        description="Book title, author, or topic to search for."
+        description="Book title, author, or topic to search for.",
+        min_length=1,
+        max_length=500,
     )
+
+    @field_validator("query")
+    @classmethod
+    def query_must_contain_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("query must contain non-whitespace text")
+        return value
 
 
 async def search_books(arguments: BookSearchInput) -> dict:

@@ -23,6 +23,9 @@ class ToolDefinition:
     handler: ToolHandler
     permission_policy: PermissionPolicy = PermissionPolicy.AUTO
 
+    def __post_init__(self) -> None:
+        self.permission_policy = PermissionPolicy(self.permission_policy)
+
     def to_openai_tool(self):
         return pydantic_function_tool(
             self.args_schema,

@@ -7,6 +7,7 @@ from app.tools.book_search import search_books_tool
 from app.tools.registry import ToolRegistry
 from app.runtime.approvals import ApprovalStore
 from app.tools.permission_demos import approval_demo_tool, denied_demo_tool
+from app.guardrails import Guardrails
 
 
 registry = ToolRegistry()
@@ -24,4 +25,9 @@ agent = AgentRuntime(
     trace_collector=trace_collector,
     tool_execution_timeout_seconds=settings.tool_execution_timeout_seconds,
     approval_store=approval_store,
+    guardrails=Guardrails(
+        max_user_message_length=settings.guardrail_max_user_message_length,
+        max_output_length=settings.guardrail_max_output_length,
+        max_repeated_characters=settings.guardrail_max_repeated_characters,
+    ),
 )

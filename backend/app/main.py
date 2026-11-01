@@ -8,6 +8,7 @@ from app.llm.client import llm_client
 from app.runtime.bootstrap import agent, trace_collector, approval_store
 from app.runtime.tracing import AgentRun
 from app.runtime.approvals import ApprovalNotFound, ApprovalConflict, ApprovalRequest
+from app.guardrails import GuardrailBlocked
 
 import logging
 
@@ -33,7 +34,7 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(max_length=100_000)
 
 
 class ChatResponse(BaseModel):
@@ -65,6 +66,8 @@ async def chat(request: ChatRequest):
             ],
         )
 
+    except GuardrailBlocked as error:
+        raise HTTPException(status_code=400, detail=error.result.reason)
     except Exception:
         logger.exception("Agent execution failed")
         raise HTTPException(

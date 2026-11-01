@@ -9,6 +9,8 @@ from app.tools.executor import ToolExecutor
 from app.tools.registry import ToolRegistry
 from app.tools.base import PermissionPolicy
 from app.runtime.approvals import ApprovalStore, ApprovalConflict
+from app.guardrails import GuardrailBlocked, Guardrails
+from app.guardrails.models import GuardrailResult, GuardrailStage
 
 
 @dataclass
@@ -32,6 +34,7 @@ class AgentRuntime:
         max_llm_retries: int = 2,
         tool_execution_timeout_seconds: float = 10.0,
         approval_store: ApprovalStore | None = None,
+        guardrails: Guardrails | None = None,
     ):
         self.client = client
         self.model = model
@@ -41,6 +44,7 @@ class AgentRuntime:
         self.max_tool_rounds = max_tool_rounds
         self.max_llm_retries = max_llm_retries
         self.approval_store = approval_store or ApprovalStore()
+        self.guardrails = guardrails or Guardrails()
         self._run_states: dict[str, _RunState] = {}
         self.approval_store.on_expire = self._handle_approval_expiry
 
@@ -59,6 +63,12 @@ class AgentRuntime:
     async def run(self, user_message: str):
         run = self.trace_collector.start_run(user_message)
         run_id = run.run_id
+        results = self.guardrails.check_input(user_message)
+        self._record_guardrail_results(run_id, results)
+        failed = next((result for result in results if not result.passed), None)
+        if failed:
+            self.trace_collector.fail_run(run_id, failed.reason or "Input rejected by guardrails")
+            raise GuardrailBlocked(failed)
 
         messages = [
             {
@@ -113,9 +123,13 @@ class AgentRuntime:
                 )
 
                 if not assistant_message.tool_calls:
+                    safe_response, results = self.guardrails.check_output(
+                        assistant_message.content
+                    )
+                    self._record_guardrail_results(run_id, results)
                     completed = self.trace_collector.complete_run(
                         run_id,
-                        assistant_message.content or "",
+                        safe_response,
                     )
                     self._run_states.pop(run_id, None)
                     return completed
@@ -136,16 +150,40 @@ class AgentRuntime:
     async def _continue_tool_calls(self, run_id: str, state: _RunState) -> bool:
         while state.next_tool_index < len(state.tool_calls):
             call = state.tool_calls[state.next_tool_index]
-            arguments = json.loads(call.function.arguments)
-            if not isinstance(arguments, dict):
-                raise ValueError("Tool arguments must be a JSON object")
-            tool = self.registry.get(call.function.name)
-            validated = tool.args_schema.model_validate(arguments)
-            arguments = validated.model_dump(mode="json")
-
             self.trace_collector.record_event(run_id, "tool_call_requested", {
                 "tool_call_id": call.id, "tool_name": call.function.name,
             })
+            try:
+                tool = self.registry.get(call.function.name)
+                validated, results = self.guardrails.validate_tool_arguments(
+                    tool, call.function.arguments
+                )
+            except KeyError:
+                result = GuardrailResult(
+                    passed=False,
+                    guardrail="registered_tool",
+                    severity="error",
+                    stage=GuardrailStage.TOOL_ARGUMENTS,
+                    reason="Requested tool is not registered.",
+                )
+                self._record_guardrail_results(run_id, [result])
+                self.trace_collector.create_tool_call(run_id, call.id, call.function.name, {})
+                self.trace_collector.fail_tool_call(run_id, call.id, result.reason)
+                state.messages.append({"role": "tool", "tool_call_id": call.id,
+                                       "content": json.dumps({"error": result.reason})})
+                state.next_tool_index += 1
+                continue
+            except GuardrailBlocked as blocked:
+                self._record_guardrail_results(run_id, [blocked.result])
+                self.trace_collector.create_tool_call(run_id, call.id, call.function.name, {})
+                self.trace_collector.fail_tool_call(run_id, call.id, blocked.result.reason or "Tool arguments rejected")
+                state.messages.append({"role": "tool", "tool_call_id": call.id,
+                                       "content": json.dumps({"error": "Tool arguments rejected by guardrails"})})
+                state.next_tool_index += 1
+                continue
+
+            self._record_guardrail_results(run_id, results)
+            arguments = validated.model_dump(mode="json")
             self.trace_collector.record_event(run_id, "permission_evaluated", {
                 "tool_call_id": call.id, "tool_name": call.function.name,
                 "policy": tool.permission_policy.value,
@@ -197,7 +235,7 @@ class AgentRuntime:
                 # An approved call transitions from waiting to execution here.
                 self.trace_collector.mark_tool_call_started(run_id, call.id)
             try:
-                result = await self.executor.execute(call.function.name, call.function.arguments)
+                result = await self.executor.execute_validated(call.function.name, validated)
             except Exception as error:
                 self.trace_collector.fail_tool_call(run_id, call.id, str(error))
                 raise
@@ -205,6 +243,23 @@ class AgentRuntime:
             state.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
             state.next_tool_index += 1
         return False
+
+    def _record_guardrail_results(self, run_id: str, results: list[GuardrailResult]) -> None:
+        for result in results:
+            prefix = {
+                GuardrailStage.INPUT: "input",
+                GuardrailStage.TOOL_ARGUMENTS: "tool",
+                GuardrailStage.OUTPUT: "output",
+            }[result.stage]
+            self.trace_collector.record_event(
+                run_id,
+                f"{prefix}_guardrail_{'passed' if result.passed else 'failed'}",
+                {
+                    "guardrail": result.guardrail,
+                    "severity": result.severity.value,
+                    **({"reason": result.reason} if result.reason else {}),
+                },
+            )
 
     async def resolve_approval(self, approval_id: str, decision: str):
         if decision not in ("approved", "rejected"):
