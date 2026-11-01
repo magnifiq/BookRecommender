@@ -27,9 +27,22 @@ synthetic tools and does not contact the LLM provider. Run it with:
 PYTHONPATH=backend python -m app.evaluation.benchmark
 ```
 
-The API also supports background evaluations. Scripted mode is the default;
-live mode must be explicitly requested with `{"mode":"live"}` and uses the
-configured LLM client. Evaluation runtimes have their own trace collectors and
-approval stores. Evaluations are held in memory and disappear on restart.
-Only scripted runs apply the dataset's synthetic approval decisions; live runs
-leave approval-required calls pending for a real approval action.
+The API runs the scripted benchmark in the background and stores results in
+memory. For a live evaluation, construct `EvaluationRunner` with a runtime
+factory that injects the configured client. The runner does not auto-approve
+live tool calls; a trusted `approval_resolver` callback is required for a
+scenario that requests an approval-gated tool.
+
+## Book assistant tools
+
+Registered tools are modular builders under `backend/app/tools/`:
+
+- `search_books` finds normalized records by title, author, or subject.
+- `get_book_details` retrieves available Work/Edition metadata by title, Open Library ID, or ISBN.
+- `recommend_books` searches and ranks real results using transparent genre, author, topic, mood, length, and exclusion rules.
+- `summarize_book` makes a short extractive summary of a catalog description or user-supplied text and marks the source. It never claims to summarize the complete book when only a description is available.
+- `generate_story` prepares a structured original-writing brief; the agent composes the story in its final LLM response.
+
+The LLM chooses tools and can chain calls across its existing tool rounds. For
+example, it can search for a title, inspect the returned work ID, then request
+details.

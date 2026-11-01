@@ -3,7 +3,12 @@ from app.core.config import settings
 from app.llm.client import llm_client
 from app.runtime.agent import AgentRuntime
 from app.runtime.trace_collector import TraceCollector
-from app.tools.book_search import search_books_tool
+from app.books.openlibrary import OpenLibraryClient
+from app.tools.book_search import build_search_books_tool
+from app.tools.book_details import build_book_details_tool
+from app.tools.recommend_books import build_recommend_books_tool
+from app.tools.summarize_book import build_summarize_book_tool
+from app.tools.generate_story import build_generate_story_tool
 from app.tools.registry import ToolRegistry
 from app.runtime.approvals import ApprovalStore
 from app.tools.permission_demos import approval_demo_tool, denied_demo_tool
@@ -14,7 +19,16 @@ from app.evaluation.service import EvaluationService
 
 
 registry = ToolRegistry()
-registry.register(search_books_tool)
+book_provider = OpenLibraryClient(
+    timeout_seconds=settings.open_library_timeout_seconds,
+    min_request_interval_seconds=settings.open_library_min_request_interval_seconds,
+    user_agent=settings.open_library_user_agent,
+)
+registry.register(build_search_books_tool(book_provider))
+registry.register(build_book_details_tool(book_provider))
+registry.register(build_recommend_books_tool(book_provider))
+registry.register(build_summarize_book_tool(book_provider))
+registry.register(build_generate_story_tool())
 registry.register(approval_demo_tool)
 registry.register(denied_demo_tool)
 

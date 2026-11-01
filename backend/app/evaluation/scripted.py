@@ -6,10 +6,16 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel
 
 from app.evaluation.models import EvaluationScenario, ScriptedResponse
+from app.books.models import BookRecord
+from app.books.openlibrary import BookProviderUnavailable
 from app.runtime.agent import AgentRuntime
 from app.runtime.trace_collector import TraceCollector
 from app.tools.base import PermissionPolicy, ToolDefinition
-from app.tools.book_search import BookSearchInput, search_books
+from app.tools.book_search import build_search_books_tool
+from app.tools.book_details import build_book_details_tool
+from app.tools.recommend_books import build_recommend_books_tool
+from app.tools.summarize_book import build_summarize_book_tool
+from app.tools.generate_story import build_generate_story_tool
 from app.tools.registry import ToolRegistry
 
 
@@ -23,6 +29,39 @@ class DemoValue(BaseModel):
 
 class DemoReason(BaseModel):
     reason: str = ""
+
+
+class FixtureBookProvider:
+    def __init__(self, scenario: EvaluationScenario):
+        self.books = [BookRecord.model_validate(book) for book in scenario.provider_books]
+        self.unavailable = scenario.provider_unavailable
+
+    async def search(self, query, search_by="any", limit=5):
+        if self.unavailable:
+            raise BookProviderUnavailable("Synthetic provider unavailable")
+        terms = query.casefold().split()
+        matches = []
+        for book in self.books:
+            if search_by == "title":
+                corpus = book.title.casefold()
+            elif search_by == "author":
+                corpus = " ".join(book.authors).casefold()
+            elif search_by == "subject":
+                corpus = " ".join(book.subjects).casefold()
+            else:
+                corpus = " ".join([book.title, *book.authors, *book.subjects, book.description or ""]).casefold()
+            if not terms or any(term in corpus for term in terms):
+                matches.append(book)
+        return matches[:limit]
+
+    async def get_details(self, identifier):
+        if self.unavailable:
+            raise BookProviderUnavailable("Synthetic provider unavailable")
+        for book in self.books:
+            if identifier in {book.title, book.work_id, book.edition_id, *book.isbns}:
+                return book
+        matches = await self.search(identifier, search_by="title", limit=1)
+        return matches[0] if matches else None
 
 
 class ScriptedClient:
@@ -72,7 +111,12 @@ class ScriptedClient:
 
 def make_scripted_runtime(scenario: EvaluationScenario) -> AgentRuntime:
     registry = ToolRegistry()
-    registry.register(ToolDefinition("search_books", "Synthetic book search", BookSearchInput, search_books))
+    provider = FixtureBookProvider(scenario)
+    registry.register(build_search_books_tool(provider))
+    registry.register(build_book_details_tool(provider))
+    registry.register(build_recommend_books_tool(provider))
+    registry.register(build_summarize_book_tool(provider))
+    registry.register(build_generate_story_tool())
 
     async def approval_handler(args: DemoText):
         return {"accepted_note": args.note}

@@ -120,6 +120,22 @@ class EvaluationRunner:
                 checks, "tool_status", actual_status == scenario.expected_tool_status,
                 repr(scenario.expected_tool_status), repr(actual_status),
             )
+        for index, assertion in enumerate(scenario.tool_result_assertions):
+            matching_call = next((call for call in tools if call.tool_name == assertion.tool_name), None)
+            actual_value = matching_call.result if matching_call else None
+            for component in assertion.result_path.split("."):
+                if isinstance(actual_value, dict):
+                    actual_value = actual_value.get(component)
+                elif isinstance(actual_value, list) and component.isdigit():
+                    position = int(component)
+                    actual_value = actual_value[position] if position < len(actual_value) else None
+                else:
+                    actual_value = None
+                    break
+            self._add_check(
+                checks, f"tool_result_{index + 1}", actual_value == assertion.expected_value,
+                repr(assertion.expected_value), repr(actual_value),
+            )
 
         retry_count = sum(e.event_type == "llm_retry_scheduled" for e in events)
         if scenario.expected_retry_count is not None:

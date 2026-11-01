@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     guardrail_max_user_message_length: int = 4000
     guardrail_max_output_length: int = 12000
     guardrail_max_repeated_characters: int = 100
+    open_library_timeout_seconds: float = 4.0
+    open_library_min_request_interval_seconds: float = 1.0
+    open_library_user_agent: str = "BookRecommender/0.1"
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",        

@@ -3,7 +3,8 @@ import asyncio
 from pydantic import BaseModel
 
 from app.tools.base import ToolDefinition
-from app.tools.book_search import search_books_tool
+from app.books.models import BookRecord
+from app.tools.book_search import build_search_books_tool
 from app.tools.registry import ToolRegistry
 from app.tools.executor import ToolExecutor
 from app.tools.executor import ToolExecutionTimeout
@@ -12,7 +13,13 @@ from app.tools.executor import ToolExecutionTimeout
 @pytest.fixture
 def executor():
     registry = ToolRegistry()
-    registry.register(search_books_tool)
+    class FakeProvider:
+        async def search(self, query, search_by="any", limit=5):
+            return [
+                BookRecord(title="Dune", authors=["Frank Herbert"], subjects=["Science fiction"]),
+                BookRecord(title="Foundation", authors=["Isaac Asimov"], subjects=["Science fiction"]),
+            ][:limit]
+    registry.register(build_search_books_tool(FakeProvider()))
     return ToolExecutor(registry)
 
 
@@ -24,6 +31,7 @@ async def test_executes_valid_tool(executor):
     )
 
     assert result["query"] == "science fiction"
+    assert result["status"] == "ok"
     assert len(result["books"]) == 2
 
 

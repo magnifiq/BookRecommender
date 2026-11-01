@@ -22,6 +22,12 @@ class ScriptedResponse(BaseModel):
     error: Literal["connection", "timeout", "http_429", "http_500", "http_400"] | None = None
 
 
+class ToolResultAssertion(BaseModel):
+    tool_name: str
+    result_path: str
+    expected_value: Any
+
+
 class EvaluationScenario(BaseModel):
     scenario_id: str
     category: str
@@ -36,9 +42,12 @@ class EvaluationScenario(BaseModel):
     approval_decision: Literal["approved", "rejected"] | None = None
     expected_tool_status: list[str] | None = None
     expected_retry_count: int | None = None
+    tool_result_assertions: list[ToolResultAssertion] = Field(default_factory=list)
     evaluation_criteria: list[str] = Field(default_factory=list)
     scripted_responses: list[ScriptedResponse] = Field(default_factory=list)
     tool_fixtures: dict[str, Literal["success", "failure", "timeout"]] = Field(default_factory=dict)
+    provider_books: list[dict[str, Any]] = Field(default_factory=list)
+    provider_unavailable: bool = False
 
 
 class EvaluationCheck(BaseModel):

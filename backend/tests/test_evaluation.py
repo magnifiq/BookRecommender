@@ -12,9 +12,9 @@ from app.evaluation.service import EvaluationService
 from app.runtime.trace_collector import TraceCollector
 
 
-def test_dataset_loads_approximately_thirty_unique_valid_scenarios():
+def test_dataset_loads_approximately_fifty_unique_valid_scenarios():
     scenarios = load_scenarios()
-    assert 20 <= len(scenarios) <= 30
+    assert 45 <= len(scenarios) <= 50
     assert len({scenario.scenario_id for scenario in scenarios}) == len(scenarios)
     assert all(isinstance(scenario, EvaluationScenario) for scenario in scenarios)
     assert {"simple_recommendation", "tool_usage", "guardrail_rejection", "approval_required"} <= {
