@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APITimeoutError, APIStatusError
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.llm.client import llm_client
-from app.runtime.bootstrap import agent
+from app.runtime.bootstrap import agent, trace_collector
+from app.runtime.tracing import AgentRun
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -34,6 +38,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     model: str
+    run_id: str
 
 
 @app.get("/health")
@@ -44,15 +49,38 @@ async def health():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        answer = await agent.run(request.message)
+        run = await agent.run(request.message)
 
         return ChatResponse(
-            response=answer,
+            response=run.final_response or "",
             model=settings.llm_model,
+            run_id=run.run_id,
         )
 
     except Exception:
+        logger.exception("Agent execution failed")
         raise HTTPException(
             status_code=500,
             detail="Agent execution failed.",
+        )
+
+
+@app.get("/api/traces", response_model=list[AgentRun])
+async def list_traces(
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    runs = trace_collector.get_all_runs()
+
+    # Return the most recent runs first.
+    return list(reversed(runs[-limit:]))
+
+
+@app.get("/api/traces/{run_id}", response_model=AgentRun)
+async def get_trace(run_id: str):
+    try:
+        return trace_collector.get_run(run_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trace '{run_id}' not found.",
         )
