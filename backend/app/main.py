@@ -1,14 +1,15 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APITimeoutError, APIStatusError
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.llm.client import llm_client
-from app.runtime.bootstrap import agent, trace_collector, approval_store
+from app.runtime.bootstrap import agent, trace_collector, approval_store, evaluation_service
 from app.runtime.tracing import AgentRun
 from app.runtime.approvals import ApprovalNotFound, ApprovalConflict, ApprovalRequest
 from app.guardrails import GuardrailBlocked
+from app.evaluation.models import EvaluationRun
 
 import logging
 
@@ -133,3 +134,30 @@ async def _resolve_approval(approval_id: str, decision: str):
     except Exception:
         logger.exception("Approval resolution failed")
         raise HTTPException(status_code=500, detail="Approval resolution failed.")
+
+
+@app.post("/api/evaluations/run", response_model=EvaluationRun, status_code=202)
+async def start_evaluation():
+    return evaluation_service.start()
+
+
+@app.get("/api/evaluations", response_model=list[EvaluationRun])
+async def list_evaluations(limit: int = Query(default=20, ge=1, le=100)):
+    return evaluation_service.list_recent(limit)
+
+
+@app.get("/api/evaluations/{evaluation_id}", response_model=EvaluationRun)
+async def get_evaluation(evaluation_id: str):
+    try:
+        return evaluation_service.get(evaluation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Evaluation not found.")
+
+
+@app.get("/api/evaluations/{evaluation_id}/json")
+async def export_evaluation(evaluation_id: str):
+    try:
+        run = evaluation_service.get(evaluation_id)
+        return Response(content=run.to_json(), media_type="application/json")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Evaluation not found.")

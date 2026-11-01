@@ -150,9 +150,10 @@ class AgentRuntime:
     async def _continue_tool_calls(self, run_id: str, state: _RunState) -> bool:
         while state.next_tool_index < len(state.tool_calls):
             call = state.tool_calls[state.next_tool_index]
-            self.trace_collector.record_event(run_id, "tool_call_requested", {
-                "tool_call_id": call.id, "tool_name": call.function.name,
-            })
+            if not any(t.tool_call_id == call.id for t in self.trace_collector.get_run(run_id).tool_calls):
+                self.trace_collector.record_event(run_id, "tool_call_requested", {
+                    "tool_call_id": call.id, "tool_name": call.function.name,
+                })
             try:
                 tool = self.registry.get(call.function.name)
                 validated, results = self.guardrails.validate_tool_arguments(

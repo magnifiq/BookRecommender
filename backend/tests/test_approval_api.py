@@ -18,3 +18,11 @@ async def test_approving_unknown_id_returns_404():
         await main.approve_request("not-present")
     assert error.value.status_code == 404
     assert error.value.detail == "Approval request not found."
+
+
+@pytest.mark.asyncio
+async def test_unknown_evaluation_id_returns_404():
+    with pytest.raises(HTTPException) as error:
+        await main.get_evaluation("not-present")
+    assert error.value.status_code == 404
+    assert error.value.detail == "Evaluation not found."
