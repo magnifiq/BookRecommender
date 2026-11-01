@@ -17,4 +17,5 @@ agent = AgentRuntime(
     model=settings.llm_model,
     registry=registry,
     trace_collector=trace_collector,
+    tool_execution_timeout_seconds=settings.tool_execution_timeout_seconds,
 )

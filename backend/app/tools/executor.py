@@ -1,11 +1,26 @@
+import asyncio
 from typing import Any
 
 from app.tools.registry import ToolRegistry
 
 
+class ToolExecutionTimeout(TimeoutError):
+    """Raised when a tool handler exceeds its configured time limit."""
+
+    def __init__(self, tool_name: str, timeout_seconds: float):
+        self.tool_name = tool_name
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"Tool '{tool_name}' exceeded timeout of {timeout_seconds:g} seconds"
+        )
+
+
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry):
+    def __init__(self, registry: ToolRegistry, timeout_seconds: float = 10.0):
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than zero")
         self.registry = registry
+        self.timeout_seconds = timeout_seconds
 
     async def execute(
         self,
@@ -18,4 +33,11 @@ class ToolExecutor:
             arguments_json
         )
 
-        return await tool.handler(arguments)
+        try:
+            return await asyncio.wait_for(
+                tool.handler(arguments), timeout=self.timeout_seconds
+            )
+        except asyncio.TimeoutError as exc:
+            raise ToolExecutionTimeout(
+                tool_name, self.timeout_seconds
+            ) from exc

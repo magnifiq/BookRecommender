@@ -1,7 +1,7 @@
 
-import json
+import json, asyncio
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIConnectionError, APIStatusError, APITimeoutError
 
 from app.runtime.trace_collector import TraceCollector
 from app.tools.executor import ToolExecutor
@@ -16,13 +16,16 @@ class AgentRuntime:
         registry: ToolRegistry,
         trace_collector: TraceCollector,
         max_tool_rounds: int = 5,
+        max_llm_retries: int = 2,
+        tool_execution_timeout_seconds: float = 10.0,
     ):
         self.client = client
         self.model = model
         self.registry = registry
-        self.executor = ToolExecutor(registry)
+        self.executor = ToolExecutor(registry, tool_execution_timeout_seconds)
         self.trace_collector = trace_collector
         self.max_tool_rounds = max_tool_rounds
+        self.max_llm_retries = max_llm_retries
 
     async def run(self, user_message: str):
         run = self.trace_collector.start_run(user_message)
@@ -50,11 +53,7 @@ class AgentRuntime:
                     {"tool_round": tool_rounds},
                 )
 
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=self.registry.get_openai_tools(),
-                )
+                response = await self._request_llm(messages, run_id)
 
                 assistant_message = response.choices[0].message
 
@@ -132,3 +131,47 @@ class AgentRuntime:
                 error=f"{type(error).__name__}: {error}",
             )
             raise
+
+    
+    async def _request_llm(self, messages: list, run_id: str):
+        for attempt in range(self.max_llm_retries + 1):
+            self.trace_collector.record_event(
+                run_id,
+                "llm_request_attempt_started",
+                {"attempt": attempt + 1},
+            )
+
+            try:
+                return await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=self.registry.get_openai_tools(),
+                )
+
+            except (APIConnectionError, APITimeoutError) as exc:
+                error = exc
+                retryable = True
+
+            except APIStatusError as exc:
+                error = exc
+                retryable = (
+                    exc.status_code in (408, 429)
+                    or exc.status_code >= 500
+                )
+
+            if not retryable or attempt == self.max_llm_retries:
+                raise error
+
+            delay = min(2 ** attempt, 8)
+
+            self.trace_collector.record_event(
+                run_id,
+                "llm_retry_scheduled",
+                {
+                    "attempt": attempt + 1,
+                    "delay_seconds": delay,
+                    "error_type": type(error).__name__,
+                },
+            )
+
+            await asyncio.sleep(delay)

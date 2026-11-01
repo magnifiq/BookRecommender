@@ -5,4 +5,5 @@ llm_client = AsyncOpenAI(
     base_url=settings.llm_base_url,
     api_key=settings.llm_api_key,
     timeout=60.0,
+    max_retries=0
 )

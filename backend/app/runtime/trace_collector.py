@@ -119,6 +119,7 @@ class TraceCollector:
                 "tool_call_id": tool_call_id,
                 "tool_name": trace.tool_name,
                 "error": error,
+                "duration_ms": trace.duration_ms,
             },
         )
 
