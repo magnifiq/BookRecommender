@@ -1,0 +1,212 @@
+[
+  {
+    "scenario_id": "plan_simple_not_needed_01", "category": "planning_router",
+    "user_input": "Recommend a short fantasy novel.", "planning_expected": false,
+    "expected_behavior": "Keep a straightforward request on the normal runtime path.",
+    "expected_run_status": "completed", "expected_plan_status": "not_planned",
+    "expected_tool_calls": [], "scripted_responses": [{"content": "Try A Wizard of Earthsea."}]
+  },
+  {
+    "scenario_id": "plan_book_discovery_01", "category": "plan_success",
+    "user_input": "Find AI science fiction, compare publication years, then recommend the best one.",
+    "planning_expected": true, "expected_plan_status": "completed",
+    "expected_behavior": "Search, compare the result, then generate a grounded recommendation.",
+    "expected_run_status": "completed", "expected_tool_calls": ["search_books"],
+    "expected_tool_status": ["completed"],
+    "expected_step_status": ["completed", "completed", "completed"],
+    "provider_books": [{"work_id": "OL1W", "title": "Dune", "authors": ["Frank Herbert"], "publication_year": 1965, "subjects": ["Science fiction", "Artificial intelligence"]}],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Search for AI science fiction", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "artificial intelligence science fiction", "search_by": "subject", "limit": 3}},
+      {"step_id": "compare", "description": "Compare available dates and descriptions", "step_type": "llm_reasoning", "depends_on": ["search"], "input_refs": ["search.output.books"]},
+      {"step_id": "final", "description": "Recommend the best suitable choice", "step_type": "final_response", "depends_on": ["compare"], "input_refs": ["compare.output"]}
+    ]},
+    "scripted_responses": [{"content": "Dune is the most relevant result and its metadata gives 1965."}, {"content": "Start with Dune, a well-known AI-adjacent science-fiction novel published in 1965."}]
+  },
+  {
+    "scenario_id": "plan_independent_steps_01", "category": "plan_dependencies",
+    "user_input": "Research and compare books by Le Guin and Herbert, then recommend one.",
+    "planning_expected": true, "expected_plan_status": "completed",
+    "expected_behavior": "Run independent catalog searches before the dependent final response.",
+    "expected_run_status": "completed", "expected_tool_calls": ["search_books", "search_books"],
+    "expected_step_status": ["completed", "completed", "completed"],
+    "provider_books": [{"work_id": "OL1W", "title": "A Wizard of Earthsea", "authors": ["Ursula K. Le Guin"]}, {"work_id": "OL2W", "title": "Dune", "authors": ["Frank Herbert"]}],
+    "plan_proposal": {"steps": [
+      {"step_id": "le_guin", "description": "Search Le Guin books", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Ursula K. Le Guin", "search_by": "author"}},
+      {"step_id": "herbert", "description": "Search Herbert books", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Frank Herbert", "search_by": "author"}},
+      {"step_id": "final", "description": "Compare and recommend", "step_type": "final_response", "depends_on": ["le_guin", "herbert"], "input_refs": ["le_guin.output.books", "herbert.output.books"]}
+    ]},
+    "scripted_responses": [{"content": "Earthsea is fantasy; Dune is science fiction."}]
+  },
+  {
+    "scenario_id": "plan_unknown_tool_01", "category": "plan_validation",
+    "user_input": "Find books, compare them, and recommend the best one.", "planning_expected": true,
+    "expected_behavior": "Reject an unknown planner tool name and fall back to the ordinary agent loop.",
+    "expected_run_status": "completed", "expected_plan_status": "rejected", "expected_tool_calls": [],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Use an unregistered tool", "step_type": "tool_execution", "tool_name": "invented_search", "arguments": {}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["search"]}
+    ]}, "scripted_responses": [{"content": "I can search registered book sources for you."}]
+  },
+  {
+    "scenario_id": "plan_cycle_01", "category": "plan_validation",
+    "user_input": "Research the options, compare them, then recommend one.", "planning_expected": true,
+    "expected_behavior": "Reject a dependency cycle before any step can execute.",
+    "expected_run_status": "completed", "expected_plan_status": "rejected", "expected_tool_calls": [],
+    "plan_proposal": {"steps": [
+      {"step_id": "a", "description": "First", "step_type": "llm_reasoning", "depends_on": ["b"]},
+      {"step_id": "b", "description": "Second", "step_type": "llm_reasoning", "depends_on": ["a"]},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["b"]}
+    ]}, "scripted_responses": [{"content": "I can help compare books."}]
+  },
+  {
+    "scenario_id": "plan_permission_field_rejected_01", "category": "plan_validation",
+    "user_input": "Research books, compare details, then recommend one.", "planning_expected": true,
+    "expected_behavior": "Reject planner output that attempts to set a tool permission policy.",
+    "expected_run_status": "completed", "expected_plan_status": "rejected", "expected_tool_calls": [],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}, "permission_policy": "auto"},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["search"]}
+    ]}, "scripted_responses": [{"content": "I can help with book research."}]
+  },
+  {
+    "scenario_id": "plan_missing_output_reference_01", "category": "plan_data_flow",
+    "user_input": "Search books, compare their records, then recommend one.", "planning_expected": true,
+    "expected_behavior": "Fail a step when a declared reference path does not exist and block its dependent response.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["search_books"],
+    "expected_step_status": ["completed", "failed", "blocked"],
+    "provider_books": [{"work_id": "OL1W", "title": "Dune", "authors": ["Frank Herbert"]}],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}},
+      {"step_id": "compare", "description": "Compare missing field", "step_type": "llm_reasoning", "depends_on": ["search"], "input_refs": ["search.output.missing_field"]},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["compare"]}
+    ]}, "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_tool_failure_blocks_dependent_01", "category": "plan_recovery",
+    "user_input": "Research options, compare results, then recommend the best one.", "planning_expected": true,
+    "expected_behavior": "Record tool failure and block dependent plan steps.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["failing_demo"],
+    "expected_tool_status": ["failed"], "expected_step_status": ["failed", "blocked"],
+    "tool_fixtures": {"failing_demo": "failure"},
+    "plan_proposal": {"steps": [
+      {"step_id": "lookup", "description": "Synthetic failing lookup", "step_type": "tool_execution", "tool_name": "failing_demo", "arguments": {"value": "failure"}},
+      {"step_id": "final", "description": "Answer from lookup", "step_type": "final_response", "depends_on": ["lookup"], "input_refs": ["lookup.output"]}
+    ]}, "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_independent_failure_continues_01", "category": "plan_recovery",
+    "user_input": "Research, compare results, and then recommend the best book.", "planning_expected": true,
+    "expected_behavior": "Continue an independent catalog search after an unrelated failure, while the overall plan remains failed.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["failing_demo", "search_books"],
+    "expected_tool_status": ["failed", "completed"], "expected_step_status": ["failed", "completed", "completed"],
+    "tool_fixtures": {"failing_demo": "failure"},
+    "provider_books": [{"work_id": "OL1W", "title": "Dune", "authors": ["Frank Herbert"]}],
+    "plan_proposal": {"steps": [
+      {"step_id": "optional", "description": "Optional enrichment", "step_type": "tool_execution", "tool_name": "failing_demo", "arguments": {"value": "failure"}},
+      {"step_id": "search", "description": "Independent book search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}},
+      {"step_id": "final", "description": "Respond from the required search", "step_type": "final_response", "depends_on": ["search"], "input_refs": ["search.output.books"]}
+    ]}, "scripted_responses": [{"content": "Dune is the available result."}]
+  },
+  {
+    "scenario_id": "plan_approval_resume_01", "category": "plan_approval",
+    "user_input": "Research a book, then compare its details, then recommend the best option.", "planning_expected": true,
+    "expected_behavior": "Pause before an approval-gated step, resume the same step once, and finish the plan.",
+    "expected_run_status": "completed", "expected_plan_status": "completed", "expected_permission": "requires_approval",
+    "approval_decision": "approved", "expected_tool_calls": ["approval_demo"], "expected_tool_status": ["completed"],
+    "expected_step_status": ["completed", "completed"],
+    "plan_proposal": {"steps": [
+      {"step_id": "approve", "description": "Run the harmless approval demo", "step_type": "tool_execution", "tool_name": "approval_demo", "arguments": {"note": "book lookup"}},
+      {"step_id": "final", "description": "Summarize the approved result", "step_type": "final_response", "depends_on": ["approve"], "input_refs": ["approve.output"]}
+    ]}, "scripted_responses": [{"content": "The approved lookup returned its note."}]
+  },
+  {
+    "scenario_id": "plan_approval_reject_01", "category": "plan_approval",
+    "user_input": "Research a book, then compare its details, then recommend the best option.", "planning_expected": true,
+    "expected_behavior": "Do not execute after rejection and block the dependent final step.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_permission": "requires_approval",
+    "approval_decision": "rejected", "expected_tool_calls": ["approval_demo"], "expected_tool_status": ["failed"],
+    "expected_step_status": ["failed", "blocked"],
+    "plan_proposal": {"steps": [
+      {"step_id": "approve", "description": "Run the harmless approval demo", "step_type": "tool_execution", "tool_name": "approval_demo", "arguments": {"note": "book lookup"}},
+      {"step_id": "final", "description": "Summarize the approved result", "step_type": "final_response", "depends_on": ["approve"], "input_refs": ["approve.output"]}
+    ]}, "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_tool_call_limit_01", "category": "plan_limits",
+    "user_input": "Find books, compare them, and recommend a good one.", "planning_expected": true,
+    "expected_behavior": "Enforce the configured maximum number of planned tool calls.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["search_books"],
+    "expected_step_status": ["completed", "failed", "blocked"], "plan_limit_overrides": {"max_tool_calls": 1},
+    "plan_proposal": {"steps": [
+      {"step_id": "one", "description": "First search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}},
+      {"step_id": "two", "description": "Second search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Earthsea"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["one", "two"]}
+    ]}, "provider_books": [{"work_id": "OL1W", "title": "Dune"}], "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_step_limit_01", "category": "plan_limits",
+    "user_input": "Research many options, compare them, and recommend one.", "planning_expected": true,
+    "expected_behavior": "Reject a plan larger than the configured step limit before execution.",
+    "expected_run_status": "completed", "expected_plan_status": "rejected", "expected_tool_calls": [],
+    "plan_limit_overrides": {"max_steps": 2},
+    "plan_proposal": {"steps": [
+      {"step_id": "one", "description": "First search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}},
+      {"step_id": "two", "description": "Second search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Earthsea"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["one", "two"]}
+    ]}, "scripted_responses": [{"content": "I can search within a bounded plan."}]
+  },
+  {
+    "scenario_id": "plan_output_limit_01", "category": "plan_limits",
+    "user_input": "Search, compare the records, and recommend one.", "planning_expected": true,
+    "expected_behavior": "Fail oversized intermediate outputs rather than passing unbounded data to later steps.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["search_books"],
+    "expected_tool_status": ["completed"], "expected_step_status": ["failed", "blocked"],
+    "plan_limit_overrides": {"max_step_output_bytes": 100}, "provider_books": [{"work_id": "OL1W", "title": "Dune", "description": "A very long description used to exceed this tiny output boundary."}],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Search", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"query": "Dune"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["search"], "input_refs": ["search.output.books"]}
+    ]}, "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_retry_safe_recovery_01", "category": "plan_recovery",
+    "user_input": "Find books, compare them, and recommend one.", "planning_expected": true, "expects_recovery": true,
+    "expected_behavior": "Retry a transient error once for a tool marked retry-safe, then complete the plan.",
+    "expected_run_status": "completed", "expected_plan_status": "completed", "expected_tool_calls": ["retry_demo"],
+    "expected_tool_status": ["completed"], "expected_step_status": ["completed", "completed"],
+    "tool_fixtures": {"retry_demo": "connection_once"},
+    "plan_proposal": {"steps": [
+      {"step_id": "lookup", "description": "Retry-safe lookup", "step_type": "tool_execution", "tool_name": "retry_demo", "arguments": {"value": "books"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["lookup"], "input_refs": ["lookup.output"]}
+    ]}, "scripted_responses": [{"content": "The lookup succeeded after a retry."}]
+  },
+  {
+    "scenario_id": "plan_nonretryable_failure_01", "category": "plan_recovery",
+    "user_input": "Research candidates, compare them, and recommend one.", "planning_expected": true,
+    "expected_behavior": "Do not retry a non-retry-safe tool failure; block its dependent response.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["failing_demo"],
+    "expected_tool_status": ["failed"], "expected_step_status": ["failed", "blocked"],
+    "tool_fixtures": {"failing_demo": "failure"},
+    "plan_proposal": {"steps": [
+      {"step_id": "lookup", "description": "Synthetic lookup", "step_type": "tool_execution", "tool_name": "failing_demo", "arguments": {"value": "failure"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["lookup"]}
+    ]}, "scripted_responses": []
+  },
+  {
+    "scenario_id": "plan_llm_failure_fallback_01", "category": "plan_failure",
+    "user_input": "Research several books, compare publication years, then recommend one.", "planning_expected": true,
+    "planning_error": true, "expected_behavior": "Use one bounded planning attempt, record its failure, and fall back to the existing runtime.",
+    "expected_run_status": "completed", "expected_plan_status": "rejected", "expected_tool_calls": [],
+    "scripted_responses": [{"content": "I can still help with your book request."}]
+  },
+  {
+    "scenario_id": "plan_bad_argument_schema_01", "category": "plan_validation",
+    "user_input": "Search candidates, compare them, and recommend one.", "planning_expected": true,
+    "expected_behavior": "Reject malformed tool arguments through existing Pydantic and guardrail validation.",
+    "expected_run_status": "failed", "expected_plan_status": "failed", "expected_tool_calls": ["search_books"],
+    "expected_step_status": ["failed", "blocked"],
+    "plan_proposal": {"steps": [
+      {"step_id": "search", "description": "Search with malformed arguments", "step_type": "tool_execution", "tool_name": "search_books", "arguments": {"unknown": "field"}},
+      {"step_id": "final", "description": "Answer", "step_type": "final_response", "depends_on": ["search"]}
+    ]}, "scripted_responses": []
+  }
+]

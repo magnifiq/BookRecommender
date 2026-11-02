@@ -33,8 +33,10 @@ output check returns a fixed safe fallback instead of the unchecked response.
 
 ## Agent evaluation
 
-The initial benchmark is `backend/app/evaluation/datasets/initial.json`. Each
-case has scripted LLM outputs and expected outcomes; the scripted runtime uses
+The scripted benchmark loads both
+`backend/app/evaluation/datasets/initial.json` and
+`backend/app/evaluation/datasets/orchestration.json`. Cases have scripted LLM
+outputs, static plan proposals, and expected outcomes; the runner uses
 synthetic tools and does not contact the LLM provider. Run it with:
 
 ```bash
@@ -50,3 +52,33 @@ scenario that requests an approval-gated tool.
 ## Conversations and preference memory
 
 Conversation history and long-term preferences are stored separately in SQLite.
+The default database is `data/conversations.sqlite3`; change it with
+`CONVERSATION_DATABASE_PATH`. Conversation IDs are untrusted identifiers, not
+authenticated user identities, so preferences are scoped only to that
+conversation. Conversation and preference data are deleted together.
+
+## Multi-step orchestration
+
+Complex requests are routed by a conservative deterministic heuristic to an
+LLM planner; simple lookups and recommendations stay on the existing runtime
+path.
+
+The orchestration benchmark is in
+`backend/app/evaluation/datasets/orchestration.json`. Plan metric denominators
+are defined as follows:
+
+- Plan validity: valid plans divided by scenarios that attempted planning,
+  including deliberately invalid proposals.
+- Step completion: completed steps divided by steps in validated plans,
+  including blocked and failed steps.
+- Dependency enforcement: dependency edges respected (a dependent step starts
+  after its source completes, or never starts) divided by all edges in
+  validated plans.
+- Unnecessary planning: planning attempts in scenarios marked simple divided
+  by all such scenarios.
+- Duplicate execution: extra tool-start events for the same call divided by
+  all tool-start events.
+- Successful recovery: expected-recovery scenarios completing after a planned
+  tool retry divided by all scenarios marked as expecting recovery.
+- Average steps per completed task: completed steps in completed plans divided
+  by completed plan tasks.

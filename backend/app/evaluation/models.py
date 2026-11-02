@@ -33,6 +33,16 @@ class EvaluationScenario(BaseModel):
     category: str
     user_input: str
     conversation_turns: list[str] = Field(default_factory=list)
+    plan_proposal: dict[str, Any] | None = None
+    planning_error: bool = False
+    expected_plan_status: Literal[
+        "not_planned", "validated", "running", "awaiting_approval",
+        "completed", "failed", "rejected",
+    ] | None = None
+    expected_step_status: list[str] | None = None
+    planning_expected: bool | None = None
+    expects_recovery: bool = False
+    plan_limit_overrides: dict[str, int | float] = Field(default_factory=dict)
     expected_behavior: str
     expected_run_status: Literal["completed", "failed", "awaiting_approval"]
     expected_tool_calls: list[str] | None = None
@@ -46,7 +56,7 @@ class EvaluationScenario(BaseModel):
     tool_result_assertions: list[ToolResultAssertion] = Field(default_factory=list)
     evaluation_criteria: list[str] = Field(default_factory=list)
     scripted_responses: list[ScriptedResponse] = Field(default_factory=list)
-    tool_fixtures: dict[str, Literal["success", "failure", "timeout"]] = Field(default_factory=dict)
+    tool_fixtures: dict[str, Literal["success", "failure", "timeout", "connection_once"]] = Field(default_factory=dict)
     provider_books: list[dict[str, Any]] = Field(default_factory=list)
     provider_unavailable: bool = False
 
@@ -97,6 +107,13 @@ class EvaluationMetrics(BaseModel):
     average_tool_execution_duration_ms: float = 0.0
     average_llm_requests_per_run: float = 0.0
     average_tool_calls_per_run: float = 0.0
+    plan_validity_rate: float = 0.0
+    step_completion_rate: float = 0.0
+    dependency_enforcement_rate: float = 0.0
+    unnecessary_planning_rate: float = 0.0
+    duplicate_execution_rate: float = 0.0
+    successful_recovery_rate: float = 0.0
+    average_steps_per_completed_task: float = 0.0
 
 
 class EvaluationCategorySummary(BaseModel):

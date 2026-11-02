@@ -4,6 +4,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+from app.orchestration.models import ExecutionPlan
 
 
 def utc_now() -> datetime:
@@ -43,6 +44,7 @@ class AgentRun(BaseModel):
 
     user_message: str
     conversation_id: str | None = None
+    execution_plan: ExecutionPlan | None = None
 
     status: Literal["running", "awaiting_approval", "completed", "failed"] = "running"
 

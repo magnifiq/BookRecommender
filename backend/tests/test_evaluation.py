@@ -14,7 +14,7 @@ from app.runtime.trace_collector import TraceCollector
 
 def test_dataset_loads_approximately_fifty_unique_valid_scenarios():
     scenarios = load_scenarios()
-    assert 55 <= len(scenarios) <= 65
+    assert 75 <= len(scenarios) <= 85
     assert len({scenario.scenario_id for scenario in scenarios}) == len(scenarios)
     assert all(isinstance(scenario, EvaluationScenario) for scenario in scenarios)
     assert {"simple_recommendation", "tool_usage", "guardrail_rejection", "approval_required"} <= {

@@ -19,6 +19,8 @@ from app.tools.generate_story import build_generate_story_tool
 from app.tools.registry import ToolRegistry
 from app.conversations.repository import SQLiteConversationRepository
 from app.conversations.service import ConversationService
+from app.orchestration.models import PlanLimits, PlanProposal
+from app.orchestration.planner import LLMPlanPlanner
 
 
 class DemoText(BaseModel):
@@ -138,6 +140,14 @@ def make_scripted_runtime(scenario: EvaluationScenario) -> AgentRuntime:
             await asyncio.Event().wait()
         return {"value": args.value}
 
+    retry_attempts = 0
+    async def retry_handler(args: DemoValue):
+        nonlocal retry_attempts
+        retry_attempts += 1
+        if scenario.tool_fixtures.get("retry_demo") == "connection_once" and retry_attempts == 1:
+            raise ConnectionError("Synthetic transient failure")
+        return {"value": args.value}
+
     registry.register(ToolDefinition(
         "approval_demo", "Harmless approval benchmark tool", DemoText,
         approval_handler, PermissionPolicy.REQUIRES_APPROVAL,
@@ -155,6 +165,23 @@ def make_scripted_runtime(scenario: EvaluationScenario) -> AgentRuntime:
         slow_handler,
     ))
 
+    registry.register(ToolDefinition(
+        "retry_demo", "Synthetic retry-safe benchmark tool", DemoValue,
+        retry_handler, retry_safe=True,
+    ))
+
+    planner = LLMPlanPlanner()
+    if scenario.plan_proposal is not None:
+        class FixturePlanner:
+            async def propose(self, *_args, **_kwargs):
+                return PlanProposal.model_validate(scenario.plan_proposal)
+        planner = FixturePlanner()
+    elif scenario.planning_error:
+        class FailingPlanner:
+            async def propose(self, *_args, **_kwargs):
+                raise RuntimeError("Synthetic planning failure")
+        planner = FailingPlanner()
+
     return AgentRuntime(
         client=ScriptedClient(scenario.scripted_responses),
         model="scripted-evaluation",
@@ -163,4 +190,6 @@ def make_scripted_runtime(scenario: EvaluationScenario) -> AgentRuntime:
         max_llm_retries=2,
         tool_execution_timeout_seconds=0.02,
         conversation_service=ConversationService(SQLiteConversationRepository(":memory:")),
+        plan_planner=planner,
+        plan_limits=PlanLimits(**scenario.plan_limit_overrides),
     )

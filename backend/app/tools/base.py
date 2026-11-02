@@ -22,6 +22,7 @@ class ToolDefinition:
     args_schema: type[BaseModel]
     handler: ToolHandler
     permission_policy: PermissionPolicy = PermissionPolicy.AUTO
+    retry_safe: bool = False
 
     def __post_init__(self) -> None:
         self.permission_policy = PermissionPolicy(self.permission_policy)

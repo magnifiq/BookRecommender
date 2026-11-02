@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     open_library_user_agent: str = "BookRecommender/0.1"
     conversation_database_path: str = str(ROOT_DIR / "data" / "conversations.sqlite3")
     conversation_context_turns: int = 12
+    plan_max_steps: int = 12
+    plan_max_tool_calls: int = 8
+    plan_max_duration_seconds: float = 60.0
+    plan_max_step_output_bytes: int = 32000
+    plan_tool_retry_limit: int = 1
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",        

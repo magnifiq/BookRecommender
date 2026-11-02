@@ -49,6 +49,7 @@ def build_search_books_tool(provider: OpenLibraryClient) -> ToolDefinition:
         ),
         args_schema=BookSearchInput,
         handler=search_books,
+        retry_safe=True,
     )
 
 

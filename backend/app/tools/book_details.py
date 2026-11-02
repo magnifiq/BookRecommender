@@ -49,4 +49,5 @@ def build_book_details_tool(provider: OpenLibraryClient) -> ToolDefinition:
         description="Retrieve available Open Library metadata for a book identifier, ISBN, or title.",
         args_schema=BookDetailsInput,
         handler=get_book_details,
+        retry_safe=True,
     )

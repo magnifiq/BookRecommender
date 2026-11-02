@@ -18,6 +18,7 @@ from app.evaluation.scripted import make_scripted_runtime
 from app.evaluation.service import EvaluationService
 from app.conversations.repository import SQLiteConversationRepository
 from app.conversations.service import ConversationService
+from app.orchestration.models import PlanLimits
 
 
 registry = ToolRegistry()
@@ -54,6 +55,13 @@ agent = AgentRuntime(
         max_repeated_characters=settings.guardrail_max_repeated_characters,
     ),
     conversation_service=conversation_service,
+    plan_limits=PlanLimits(
+        max_steps=settings.plan_max_steps,
+        max_tool_calls=settings.plan_max_tool_calls,
+        max_duration_seconds=settings.plan_max_duration_seconds,
+        max_step_output_bytes=settings.plan_max_step_output_bytes,
+        tool_retry_limit=settings.plan_tool_retry_limit,
+    ),
 )
 
 
@@ -72,6 +80,13 @@ def make_live_evaluation_runtime(_scenario):
             max_user_message_length=settings.guardrail_max_user_message_length,
             max_output_length=settings.guardrail_max_output_length,
             max_repeated_characters=settings.guardrail_max_repeated_characters,
+        ),
+        plan_limits=PlanLimits(
+            max_steps=settings.plan_max_steps,
+            max_tool_calls=settings.plan_max_tool_calls,
+            max_duration_seconds=settings.plan_max_duration_seconds,
+            max_step_output_bytes=settings.plan_max_step_output_bytes,
+            tool_retry_limit=settings.plan_tool_retry_limit,
         ),
     )
 

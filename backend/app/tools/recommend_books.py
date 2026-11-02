@@ -62,4 +62,5 @@ def build_recommend_books_tool(
         ),
         args_schema=RecommendBooksInput,
         handler=recommend_books,
+        retry_safe=True,
     )

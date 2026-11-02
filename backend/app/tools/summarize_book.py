@@ -118,4 +118,5 @@ def build_summarize_book_tool(provider: OpenLibraryClient) -> ToolDefinition:
         ),
         args_schema=SummarizeBookInput,
         handler=summarize_book,
+        retry_safe=True,
     )

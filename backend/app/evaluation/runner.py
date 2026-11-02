@@ -117,6 +117,24 @@ class EvaluationRunner:
             checks, "run_status", trace is not None and trace.status == scenario.expected_run_status,
             scenario.expected_run_status, trace.status if trace else "no trace",
         )
+        if scenario.expected_plan_status is not None:
+            if trace and trace.execution_plan:
+                actual_plan_status = trace.execution_plan.status.value
+            elif trace and any(event.event_type == "plan_rejected" for event in events):
+                actual_plan_status = "rejected"
+            else:
+                actual_plan_status = "not_planned"
+            self._add_check(checks, "plan_status", actual_plan_status == scenario.expected_plan_status,
+                            scenario.expected_plan_status, actual_plan_status)
+        if scenario.expected_step_status is not None:
+            actual_steps = ([step.status.value for step in trace.execution_plan.steps]
+                            if trace and trace.execution_plan else [])
+            self._add_check(checks, "plan_step_status", actual_steps == scenario.expected_step_status,
+                            scenario.expected_step_status, actual_steps)
+        if scenario.planning_expected is not None:
+            planned = any(event.event_type == "planning_started" for event in events)
+            correct = planned == scenario.planning_expected
+            self._add_check(checks, "planning_route", correct, scenario.planning_expected, planned)
         if scenario.expected_tool_calls is not None:
             self._add_check(
                 checks, "tool_selection", requested == scenario.expected_tool_calls,
@@ -354,6 +372,55 @@ class EvaluationRunner:
         run_durations = [trace.duration_ms for trace in traces if trace.duration_ms is not None]
         tool_durations = [call.duration_ms for call in executed_calls if call.duration_ms is not None]
 
+        planned_cases = [(scenario, trace) for scenario, _, trace in observed
+                         if scenario.plan_proposal is not None or scenario.planning_error
+                         or scenario.planning_expected is True]
+        valid_plans = [(scenario, trace) for scenario, trace in planned_cases
+                       if trace and trace.execution_plan and trace.execution_plan.status != "rejected"]
+        executable_plans = [(scenario, trace) for scenario, _, trace in observed
+                            if trace and trace.execution_plan and trace.execution_plan.status != "rejected"]
+        all_plan_steps = [step for _, trace in executable_plans for step in trace.execution_plan.steps]
+        completed_plan_steps = sum(step.status == "completed" for step in all_plan_steps)
+        dependency_edges = 0
+        satisfied_edges = 0
+        for _, trace in executable_plans:
+            first_started = {}
+            completed_at = {}
+            for event_index, event in enumerate(trace.events):
+                step_id = event.details.get("step_id")
+                if event.event_type == "step_started":
+                    first_started.setdefault(step_id, event_index)
+                elif event.event_type == "step_completed":
+                    completed_at.setdefault(step_id, event_index)
+            for step in trace.execution_plan.steps:
+                for dependency in step.depends_on:
+                    dependency_edges += 1
+                    target_start = first_started.get(step.step_id)
+                    if target_start is None or completed_at.get(dependency, target_start + 1) < target_start:
+                        satisfied_edges += 1
+        unnecessary_cases = [(scenario, trace) for scenario, _, trace in observed
+                             if scenario.planning_expected is False]
+        unnecessary_plans = sum(
+            trace is not None and any(event.event_type == "planning_started" for event in trace.events)
+            for _, trace in unnecessary_cases
+        )
+        started_tool_ids = [(trace.run_id, event.details.get("tool_call_id"))
+                            for trace in traces for event in trace.events
+                            if event.event_type == "tool_call_started"]
+        duplicate_starts = sum(count - 1 for count in Counter(started_tool_ids).values() if count > 1)
+        recovery_cases = [(scenario, trace) for scenario, _, trace in observed if scenario.expects_recovery]
+        successful_recoveries = sum(
+            trace is not None and trace.status == "completed"
+            and any(event.event_type == "tool_retry_scheduled" for event in trace.events)
+            for _, trace in recovery_cases
+        )
+        completed_plan_tasks = sum(trace.execution_plan.status == "completed" for _, trace in executable_plans)
+        completed_steps_for_tasks = sum(
+            step.status == "completed"
+            for _, trace in executable_plans if trace.execution_plan.status == "completed"
+            for step in trace.execution_plan.steps
+        )
+
         rate = lambda numerator, denominator: numerator / denominator if denominator else 0.0
         return EvaluationMetrics(
             scenario_count=total,
@@ -373,6 +440,13 @@ class EvaluationRunner:
             average_tool_execution_duration_ms=sum(tool_durations) / len(tool_durations) if tool_durations else 0.0,
             average_llm_requests_per_run=sum(sum(e.event_type == "llm_request_attempt_started" for e in t.events) for t in traces) / total if total else 0.0,
             average_tool_calls_per_run=sum(len(names) for _, _, names in requested) / total if total else 0.0,
+            plan_validity_rate=rate(len(valid_plans), len(planned_cases)),
+            step_completion_rate=rate(completed_plan_steps, len(all_plan_steps)),
+            dependency_enforcement_rate=rate(satisfied_edges, dependency_edges),
+            unnecessary_planning_rate=rate(unnecessary_plans, len(unnecessary_cases)),
+            duplicate_execution_rate=rate(duplicate_starts, len(started_tool_ids)),
+            successful_recovery_rate=rate(successful_recoveries, len(recovery_cases)),
+            average_steps_per_completed_task=rate(completed_steps_for_tasks, completed_plan_tasks),
         )
 
     @staticmethod
