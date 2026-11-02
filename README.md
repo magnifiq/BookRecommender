@@ -82,3 +82,23 @@ are defined as follows:
   tool retry divided by all scenarios marked as expecting recovery.
 - Average steps per completed task: completed steps in completed plans divided
   by completed plan tasks.
+
+## Gradio frontend
+
+The frontend is an independent Gradio application in `frontend/`. It talks to
+FastAPI only over HTTP; it does not import runtime code or execute tools. Start
+the backend and frontend in separate terminals:
+
+```bash
+cd backend
+uv run uvicorn app.main:app --reload
+```
+
+```bash
+cd frontend
+uv run python app.py
+```
+
+Run the
+frontend HTTP-client and presentation helper tests from `frontend/` with
+`uv run --group dev pytest tests`.

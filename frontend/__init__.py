@@ -1,0 +1,1 @@
+"""Standalone Gradio frontend package."""
