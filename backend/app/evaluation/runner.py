@@ -50,33 +50,47 @@ class EvaluationRunner:
         execution_error: str | None = None
         try:
             runtime = self.runtime_factory(scenario)
-            try:
-                trace = await runtime.run(scenario.user_input)
-            except GuardrailBlocked:
-                trace = runtime.trace_collector.get_all_runs()[-1]
-            except Exception as error:
-                execution_error = type(error).__name__
-                runs = runtime.trace_collector.get_all_runs()
-                trace = runs[-1] if runs else None
+            turn_traces = []
+            conversation_id = None
+            for turn in [scenario.user_input, *scenario.conversation_turns]:
+                try:
+                    trace = await runtime.run(turn, conversation_id=conversation_id)
+                    conversation_id = trace.conversation_id
+                except GuardrailBlocked:
+                    trace = runtime.trace_collector.get_all_runs()[-1]
+                except Exception as error:
+                    execution_error = type(error).__name__
+                    runs = runtime.trace_collector.get_all_runs()
+                    trace = runs[-1] if runs else None
+                if trace:
+                    turn_traces.append(trace)
 
-            if trace and trace.status == "awaiting_approval":
-                pending = runtime.approval_store.list_pending()
-                if pending:
-                    decision = None
-                    if self.auto_resolve_approvals:
-                        decision = scenario.approval_decision
-                    elif self.approval_resolver:
-                        decision = await self.approval_resolver(
-                            scenario, runtime, pending[0].approval_id
-                        )
-                    if decision in ("approved", "rejected"):
-                        try:
-                            trace = await runtime.resolve_approval(
-                                pending[0].approval_id, decision
+                if trace and trace.status == "awaiting_approval":
+                    pending = runtime.approval_store.list_pending()
+                    if pending:
+                        decision = None
+                        if self.auto_resolve_approvals:
+                            decision = scenario.approval_decision
+                        elif self.approval_resolver:
+                            decision = await self.approval_resolver(
+                                scenario, runtime, pending[0].approval_id
                             )
-                        except Exception as error:
-                            execution_error = type(error).__name__
-                            trace = runtime.trace_collector.get_run(trace.run_id)
+                        if decision in ("approved", "rejected"):
+                            try:
+                                trace = await runtime.resolve_approval(pending[0].approval_id, decision)
+                                turn_traces[-1] = trace
+                            except Exception as error:
+                                execution_error = type(error).__name__
+                                trace = runtime.trace_collector.get_run(trace.run_id)
+                                turn_traces[-1] = trace
+            if len(turn_traces) > 1:
+                latest = turn_traces[-1]
+                trace = latest.model_copy(update={
+                    "user_message": scenario.user_input,
+                    "events": [event for item in turn_traces for event in item.events],
+                    "tool_calls": [tool for item in turn_traces for tool in item.tool_calls],
+                    "duration_ms": sum(item.duration_ms or 0 for item in turn_traces),
+                })
         except Exception as error:
             execution_error = type(error).__name__
             if runtime:

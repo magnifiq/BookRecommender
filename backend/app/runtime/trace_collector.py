@@ -14,8 +14,8 @@ class TraceCollector:
     def __init__(self) -> None:
         self._runs: dict[str, AgentRun] = {}
 
-    def start_run(self, user_message: str) -> AgentRun:
-        run = AgentRun(user_message=user_message)
+    def start_run(self, user_message: str, conversation_id: str | None = None) -> AgentRun:
+        run = AgentRun(user_message=user_message, conversation_id=conversation_id)
 
         self._runs[run.run_id] = run
 

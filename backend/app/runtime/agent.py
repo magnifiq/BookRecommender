@@ -16,6 +16,7 @@ from app.guardrails.models import GuardrailResult, GuardrailStage
 @dataclass
 class _RunState:
     messages: list
+    conversation_id: str | None = None
     tool_rounds: int = 0
     tool_calls: list | None = None
     next_tool_index: int = 0
@@ -35,6 +36,7 @@ class AgentRuntime:
         tool_execution_timeout_seconds: float = 10.0,
         approval_store: ApprovalStore | None = None,
         guardrails: Guardrails | None = None,
+        conversation_service=None,
     ):
         self.client = client
         self.model = model
@@ -45,6 +47,7 @@ class AgentRuntime:
         self.max_llm_retries = max_llm_retries
         self.approval_store = approval_store or ApprovalStore()
         self.guardrails = guardrails or Guardrails()
+        self.conversation_service = conversation_service
         self._run_states: dict[str, _RunState] = {}
         self.approval_store.on_expire = self._handle_approval_expiry
 
@@ -60,15 +63,50 @@ class AgentRuntime:
             )
             self.trace_collector.fail_run(request.run_id, "Approval request expired")
 
-    async def run(self, user_message: str):
-        run = self.trace_collector.start_run(user_message)
+    async def run(self, user_message: str, conversation_id: str | None = None):
+        memory_context = None
+        if self.conversation_service is not None:
+            if conversation_id is None:
+                conversation = self.conversation_service.create()
+                conversation_id = conversation.conversation_id
+                # The run does not exist yet, so emit this just after it is created.
+                created = True
+            else:
+                conversation = self.conversation_service.get(conversation_id)
+                if conversation is None:
+                    raise KeyError("Unknown conversation")
+                created = False
+        else:
+            created = False
+        run = self.trace_collector.start_run(user_message, conversation_id)
         run_id = run.run_id
+        if conversation_id:
+            self.trace_collector.record_event(run_id, "conversation_created" if created else "conversation_resumed", {
+                "conversation_id": conversation_id,
+            })
         results = self.guardrails.check_input(user_message)
         self._record_guardrail_results(run_id, results)
         failed = next((result for result in results if not result.passed), None)
         if failed:
             self.trace_collector.fail_run(run_id, failed.reason or "Input rejected by guardrails")
             raise GuardrailBlocked(failed)
+
+        if self.conversation_service is not None:
+            explicit_preferences = self.conversation_service.parse_explicit_memory_instruction(user_message)
+            if explicit_preferences:
+                saved = [self.conversation_service.save_preference(conversation_id, category, value)
+                         for category, value in explicit_preferences]
+                response_text = "I’ll remember these preferences for this conversation: " + "; ".join(
+                    f"{preference.category.replace('_', ' ')}: {preference.value}" for preference in saved
+                ) + "."
+                self.conversation_service.append(conversation_id, {"role": "user", "content": user_message})
+                self.conversation_service.append(conversation_id, {"role": "assistant", "content": response_text})
+                self.trace_collector.record_event(run_id, "memory_saved", {
+                    "conversation_id": conversation_id,
+                    "categories": [category for category, _ in explicit_preferences],
+                    "count": len(saved),
+                })
+                return self.trace_collector.complete_run(run_id, response_text)
 
         messages = [
             {
@@ -79,11 +117,29 @@ class AgentRuntime:
                     "the user's request."
                 ),
             },
-            {"role": "user", "content": user_message},
         ]
-
-        self._run_states[run_id] = _RunState(messages=messages)
+        if self.conversation_service is not None:
+            history = self.conversation_service.llm_context(conversation_id)
+            self.trace_collector.record_event(run_id, "conversation_context_loaded", {
+                "conversation_id": conversation_id, "message_count": len(history),
+            })
+            messages.extend(history)
+            memory_context = self.conversation_service.preference_context(conversation_id)
+            self.trace_collector.record_event(run_id, "memory_retrieved", {
+                "conversation_id": conversation_id,
+                "preference_count": len(self.conversation_service.preferences(conversation_id)),
+            })
+            if memory_context:
+                messages.insert(1, {"role": "system", "content": memory_context})
+        self._run_states[run_id] = _RunState(messages=messages, conversation_id=conversation_id)
+        self._append_message(run_id, {"role": "user", "content": user_message})
         return await self._drive(run_id)
+
+    def _append_message(self, run_id: str, message: dict) -> None:
+        state = self._run_states[run_id]
+        state.messages.append(message)
+        if self.conversation_service is not None and state.conversation_id:
+            self.conversation_service.append(state.conversation_id, message)
 
     async def _drive(self, run_id: str):
         state = self._run_states[run_id]
@@ -118,21 +174,22 @@ class AgentRuntime:
                     },
                 )
 
-                state.messages.append(
-                    assistant_message.model_dump(exclude_none=True)
-                )
-
                 if not assistant_message.tool_calls:
                     safe_response, results = self.guardrails.check_output(
                         assistant_message.content
                     )
                     self._record_guardrail_results(run_id, results)
+                    persisted_assistant = assistant_message.model_dump(exclude_none=True)
+                    persisted_assistant["content"] = safe_response
+                    self._append_message(run_id, persisted_assistant)
                     completed = self.trace_collector.complete_run(
                         run_id,
                         safe_response,
                     )
                     self._run_states.pop(run_id, None)
                     return completed
+
+                self._append_message(run_id, assistant_message.model_dump(exclude_none=True))
 
                 if state.tool_rounds >= self.max_tool_rounds:
                     raise RuntimeError("Maximum tool rounds exceeded")
@@ -170,16 +227,16 @@ class AgentRuntime:
                 self._record_guardrail_results(run_id, [result])
                 self.trace_collector.create_tool_call(run_id, call.id, call.function.name, {})
                 self.trace_collector.fail_tool_call(run_id, call.id, result.reason)
-                state.messages.append({"role": "tool", "tool_call_id": call.id,
-                                       "content": json.dumps({"error": result.reason})})
+                self._append_message(run_id, {"role": "tool", "tool_call_id": call.id,
+                                               "content": json.dumps({"error": result.reason})})
                 state.next_tool_index += 1
                 continue
             except GuardrailBlocked as blocked:
                 self._record_guardrail_results(run_id, [blocked.result])
                 self.trace_collector.create_tool_call(run_id, call.id, call.function.name, {})
                 self.trace_collector.fail_tool_call(run_id, call.id, blocked.result.reason or "Tool arguments rejected")
-                state.messages.append({"role": "tool", "tool_call_id": call.id,
-                                       "content": json.dumps({"error": "Tool arguments rejected by guardrails"})})
+                self._append_message(run_id, {"role": "tool", "tool_call_id": call.id,
+                                               "content": json.dumps({"error": "Tool arguments rejected by guardrails"})})
                 state.next_tool_index += 1
                 continue
 
@@ -192,8 +249,8 @@ class AgentRuntime:
             if tool.permission_policy == PermissionPolicy.DENIED:
                 self.trace_collector.create_tool_call(run_id, call.id, call.function.name, arguments)
                 self.trace_collector.fail_tool_call(run_id, call.id, "Tool execution is denied by application policy")
-                state.messages.append({"role": "tool", "tool_call_id": call.id,
-                                       "content": json.dumps({"error": "Tool execution denied by application policy"})})
+                self._append_message(run_id, {"role": "tool", "tool_call_id": call.id,
+                                               "content": json.dumps({"error": "Tool execution denied by application policy"})})
                 self.trace_collector.record_event(run_id, "tool_execution_denied", {"tool_call_id": call.id})
                 state.next_tool_index += 1
                 continue
@@ -221,8 +278,8 @@ class AgentRuntime:
                 if decision == "rejected":
                     self.trace_collector.fail_tool_call(run_id, call.id, "Tool execution rejected by user")
                     self.trace_collector.record_event(run_id, "approval_rejected", {"approval_id": approval_id, "tool_call_id": call.id})
-                    state.messages.append({"role": "tool", "tool_call_id": call.id,
-                                           "content": json.dumps({"error": "Tool call rejected by user"})})
+                    self._append_message(run_id, {"role": "tool", "tool_call_id": call.id,
+                                                   "content": json.dumps({"error": "Tool call rejected by user"})})
                     state.next_tool_index += 1
                     continue
                 self.trace_collector.record_event(run_id, "approval_granted", {"approval_id": approval_id, "tool_call_id": call.id})
@@ -239,9 +296,19 @@ class AgentRuntime:
                 result = await self.executor.execute_validated(call.function.name, validated)
             except Exception as error:
                 self.trace_collector.fail_tool_call(run_id, call.id, str(error))
+                # Pair persisted assistant tool calls with a safe tool response so a later
+                # conversation turn never receives an orphaned call or raw exception details.
+                failed_tool_message = {
+                    "role": "tool", "tool_call_id": call.id,
+                    "content": json.dumps({"error": "Tool execution failed."}),
+                }
+                # Persist a matching, sanitized outcome for future turns, but do not
+                # mutate this run's LLM context after execution failed or timed out.
+                if self.conversation_service is not None and state.conversation_id:
+                    self.conversation_service.append(state.conversation_id, failed_tool_message)
                 raise
             self.trace_collector.complete_tool_call(run_id, call.id, result)
-            state.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+            self._append_message(run_id, {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
             state.next_tool_index += 1
         return False
 

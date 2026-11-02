@@ -2,6 +2,20 @@
 
 This project helps to find you your next favourite book:D
 
+## Book assistant tools
+
+Registered tools are modular builders under `backend/app/tools/`:
+
+- `search_books` finds normalized records by title, author, or subject.
+- `get_book_details` retrieves available Work/Edition metadata by title, Open Library ID, or ISBN.
+- `recommend_books` searches and ranks real results using transparent genre, author, topic, mood, length, and exclusion rules.
+- `summarize_book` makes a short extractive summary of a catalog description or user-supplied text and marks the source. It never claims to summarize the complete book when only a description is available.
+- `generate_story` prepares a structured original-writing brief; the agent composes the story in its final LLM response.
+
+The LLM chooses tools and can chain calls across its existing tool rounds. For
+example, it can search for a title, inspect the returned work ID, then request
+details.
+
 ## Guardrails
 
 The runtime checks user messages before making an LLM request, validates tool
@@ -33,16 +47,6 @@ factory that injects the configured client. The runner does not auto-approve
 live tool calls; a trusted `approval_resolver` callback is required for a
 scenario that requests an approval-gated tool.
 
-## Book assistant tools
+## Conversations and preference memory
 
-Registered tools are modular builders under `backend/app/tools/`:
-
-- `search_books` finds normalized records by title, author, or subject.
-- `get_book_details` retrieves available Work/Edition metadata by title, Open Library ID, or ISBN.
-- `recommend_books` searches and ranks real results using transparent genre, author, topic, mood, length, and exclusion rules.
-- `summarize_book` makes a short extractive summary of a catalog description or user-supplied text and marks the source. It never claims to summarize the complete book when only a description is available.
-- `generate_story` prepares a structured original-writing brief; the agent composes the story in its final LLM response.
-
-The LLM chooses tools and can chain calls across its existing tool rounds. For
-example, it can search for a title, inspect the returned work ID, then request
-details.
+Conversation history and long-term preferences are stored separately in SQLite.

@@ -32,6 +32,7 @@ class EvaluationScenario(BaseModel):
     scenario_id: str
     category: str
     user_input: str
+    conversation_turns: list[str] = Field(default_factory=list)
     expected_behavior: str
     expected_run_status: Literal["completed", "failed", "awaiting_approval"]
     expected_tool_calls: list[str] | None = None

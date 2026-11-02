@@ -16,6 +16,8 @@ from app.guardrails import Guardrails
 from app.evaluation.dataset import load_scenarios
 from app.evaluation.scripted import make_scripted_runtime
 from app.evaluation.service import EvaluationService
+from app.conversations.repository import SQLiteConversationRepository
+from app.conversations.service import ConversationService
 
 
 registry = ToolRegistry()
@@ -34,6 +36,10 @@ registry.register(denied_demo_tool)
 
 trace_collector = TraceCollector()
 approval_store = ApprovalStore()
+conversation_repository = SQLiteConversationRepository(settings.conversation_database_path)
+conversation_service = ConversationService(
+    conversation_repository, max_context_turns=settings.conversation_context_turns
+)
 
 agent = AgentRuntime(
     client=llm_client,
@@ -47,6 +53,7 @@ agent = AgentRuntime(
         max_output_length=settings.guardrail_max_output_length,
         max_repeated_characters=settings.guardrail_max_repeated_characters,
     ),
+    conversation_service=conversation_service,
 )
 
 

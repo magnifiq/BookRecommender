@@ -17,6 +17,8 @@ from app.tools.recommend_books import build_recommend_books_tool
 from app.tools.summarize_book import build_summarize_book_tool
 from app.tools.generate_story import build_generate_story_tool
 from app.tools.registry import ToolRegistry
+from app.conversations.repository import SQLiteConversationRepository
+from app.conversations.service import ConversationService
 
 
 class DemoText(BaseModel):
@@ -160,4 +162,5 @@ def make_scripted_runtime(scenario: EvaluationScenario) -> AgentRuntime:
         trace_collector=TraceCollector(),
         max_llm_retries=2,
         tool_execution_timeout_seconds=0.02,
+        conversation_service=ConversationService(SQLiteConversationRepository(":memory:")),
     )

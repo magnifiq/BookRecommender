@@ -42,6 +42,7 @@ class AgentRun(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid4()))
 
     user_message: str
+    conversation_id: str | None = None
 
     status: Literal["running", "awaiting_approval", "completed", "failed"] = "running"
 

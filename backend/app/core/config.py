@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     open_library_timeout_seconds: float = 4.0
     open_library_min_request_interval_seconds: float = 1.0
     open_library_user_agent: str = "BookRecommender/0.1"
+    conversation_database_path: str = str(ROOT_DIR / "data" / "conversations.sqlite3")
+    conversation_context_turns: int = 12
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",        

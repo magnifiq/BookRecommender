@@ -1,15 +1,20 @@
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from openai import APIConnectionError, APITimeoutError, APIStatusError
-from pydantic import BaseModel, Field
-
 from app.core.config import settings
 from app.llm.client import llm_client
-from app.runtime.bootstrap import agent, trace_collector, approval_store, evaluation_service
+from app.runtime.bootstrap import agent, trace_collector, approval_store, evaluation_service, conversation_service
 from app.runtime.tracing import AgentRun
 from app.runtime.approvals import ApprovalNotFound, ApprovalConflict, ApprovalRequest
 from app.guardrails import GuardrailBlocked
 from app.evaluation.models import EvaluationRun
+from app.conversations.models import (
+    ChatRequest,
+    ChatResponse,
+    ConversationDetail,
+    Preference,
+    PreferenceCreate,
+)
+from app.conversations.repository import ConversationStorageError
 
 import logging
 
@@ -34,18 +39,6 @@ app.add_middleware(
 )
 
 
-class ChatRequest(BaseModel):
-    message: str = Field(max_length=100_000)
-
-
-class ChatResponse(BaseModel):
-    response: str
-    model: str
-    run_id: str
-    status: str = "completed"
-    pending_approval_ids: list[str] = Field(default_factory=list)
-
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -54,12 +47,17 @@ async def health():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        run = await agent.run(request.message)
+        conversation_id = request.conversation_id
+        if conversation_id and conversation_service.get(conversation_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        run = await agent.run(request.message, conversation_id=conversation_id)
 
         return ChatResponse(
             response=run.final_response or "",
             model=settings.llm_model,
             run_id=run.run_id,
+            conversation_id=run.conversation_id or "",
             status=run.status,
             pending_approval_ids=[
                 call.approval_id for call in run.tool_calls
@@ -69,12 +67,102 @@ async def chat(request: ChatRequest):
 
     except GuardrailBlocked as error:
         raise HTTPException(status_code=400, detail=error.result.reason)
+    except HTTPException:
+        raise
+    except ConversationStorageError:
+        logger.exception("Conversation storage failed")
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
     except Exception:
         logger.exception("Agent execution failed")
         raise HTTPException(
             status_code=500,
             detail="Agent execution failed.",
         )
+
+
+@app.get("/api/conversations")
+async def list_conversations(limit: int = Query(default=50, ge=1, le=100)):
+    try:
+        return conversation_service.list_conversations(limit)
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+@app.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(conversation_id: str):
+    try:
+        conversation = conversation_service.get(conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        return ConversationDetail(conversation=conversation, messages=conversation_service.history(conversation_id))
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+@app.delete("/api/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: str):
+    try:
+        if not conversation_service.delete(conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        return Response(status_code=204)
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+def _require_conversation(conversation_id: str):
+    conversation = conversation_service.get(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return conversation
+
+
+@app.get("/api/conversations/{conversation_id}/preferences", response_model=list[Preference])
+async def get_preferences(conversation_id: str):
+    try:
+        _require_conversation(conversation_id)
+        return conversation_service.preferences(conversation_id)
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+@app.post("/api/conversations/{conversation_id}/preferences", response_model=Preference, status_code=201)
+async def create_preference(conversation_id: str, request: PreferenceCreate):
+    try:
+        _require_conversation(conversation_id)
+        preference = conversation_service.save_preference(conversation_id, request.category, request.value)
+        trace = trace_collector.start_run("Explicit preference update", conversation_id)
+        trace_collector.record_event(trace.run_id, "memory_saved", {"conversation_id": conversation_id, "category": request.category})
+        trace_collector.complete_run(trace.run_id, "Preference saved.")
+        return preference
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+@app.delete("/api/conversations/{conversation_id}/preferences/{preference_id}", status_code=204)
+async def delete_preference(conversation_id: str, preference_id: str):
+    try:
+        _require_conversation(conversation_id)
+        if not conversation_service.delete_preference(conversation_id, preference_id):
+            raise HTTPException(status_code=404, detail="Preference not found.")
+        trace = trace_collector.start_run("Explicit preference deletion", conversation_id)
+        trace_collector.record_event(trace.run_id, "memory_deleted", {"conversation_id": conversation_id, "count": 1})
+        trace_collector.complete_run(trace.run_id, "Preference deleted.")
+        return Response(status_code=204)
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
+
+
+@app.delete("/api/conversations/{conversation_id}/preferences", status_code=204)
+async def clear_preferences(conversation_id: str):
+    try:
+        _require_conversation(conversation_id)
+        deleted = conversation_service.clear_preferences(conversation_id)
+        trace = trace_collector.start_run("Explicit preference clear", conversation_id)
+        trace_collector.record_event(trace.run_id, "memory_deleted", {"conversation_id": conversation_id, "count": deleted})
+        trace_collector.complete_run(trace.run_id, "Preferences cleared.")
+        return Response(status_code=204)
+    except ConversationStorageError:
+        raise HTTPException(status_code=503, detail="Conversation storage is temporarily unavailable.")
 
 
 @app.get("/api/traces", response_model=list[AgentRun])
